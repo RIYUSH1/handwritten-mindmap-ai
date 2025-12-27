@@ -2,7 +2,7 @@ streamlit
 opencv-python
 pillow
 numpy
-pytesseract
 networkx
 matplotlib
 pyvis
+easyocr
