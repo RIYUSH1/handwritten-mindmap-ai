@@ -10,4 +10,4 @@ An AI-powered Streamlit application that converts handwritten or typed notes int
 - Deployed on Streamlit Cloud
 
 ## Live Demo
-👉 https://handwritten-mindmap-ai-xxxx.streamlit.app
+👉https://handwritten-mindmap-ai-wqjmxv7toxralavc6oawab.streamlit.app/
