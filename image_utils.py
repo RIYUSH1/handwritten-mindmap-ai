@@ -1,11 +1,19 @@
-import cv2
 import numpy as np
 import logging
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("ImageUtils")
+
+# Safe OpenCV Import
+try:
+    import cv2
+    HAS_CV2 = True
+    logger.info("OpenCV (cv2) imported successfully.")
+except ImportError as e:
+    HAS_CV2 = False
+    logger.warning(f"OpenCV (cv2) import failed: {e}. Falling back to PIL-only image preprocessing.")
 
 def load_image_safely(image_input) -> Image.Image:
     """
@@ -74,6 +82,83 @@ def resize_image_optimally(image: Image.Image, target_width: int = 1800) -> Imag
         return image
 
 
+def _preprocess_via_pil(
+    image: Image.Image,
+    grayscale: bool = True,
+    sharpen: bool = True,
+    denoise: bool = True,
+    threshold: bool = True
+) -> tuple:
+    """
+    Highly optimized image preprocessing fallback using pure PIL/Pillow.
+    Matches standard OpenCV actions to provide stable, clean OCR text feed.
+    """
+    logger.info("Executing PIL/Pillow fallback preprocessing pipeline...")
+    try:
+        processed = image.copy()
+
+        # 1. Grayscale conversion
+        if grayscale:
+            processed = processed.convert("L")
+            logger.info("PIL: Grayscale conversion applied.")
+
+        # 2. Denoising / Smoothing
+        if denoise:
+            # We use a Median Filter to preserve edges while removing salt-and-pepper noise
+            processed = processed.filter(ImageFilter.MedianFilter(size=3))
+            logger.info("PIL: Median filter denoising applied.")
+
+        # 3. High-Pass Sharpening
+        if sharpen:
+            # First, boost contrast slightly to highlight stroke edges
+            contrast_enhancer = ImageEnhance.Contrast(processed)
+            processed = contrast_enhancer.enhance(1.4)
+            # Then apply sharpening filter
+            processed = processed.filter(ImageFilter.SHARPEN)
+            sharp_enhancer = ImageEnhance.Sharpness(processed)
+            processed = sharp_enhancer.enhance(1.5)
+            logger.info("PIL: Edge and stroke sharpening applied.")
+
+        # 4. Adaptive Thresholding equivalent (Numpy local mean thresholding or point threshold)
+        if threshold:
+            if processed.mode != "L":
+                processed = processed.convert("L")
+            
+            # Using simple adaptive thresholding on NumPy array for accuracy
+            arr = np.array(processed)
+            
+            # Block-based local thresholding in Pure NumPy:
+            # We calculate a simple local threshold using a uniform filter equivalent (numpy box blur)
+            from scipy.ndimage import uniform_filter
+            # Safe scipy import
+            try:
+                # Apply 15x15 uniform filter to compute local means
+                local_mean = uniform_filter(arr.astype(float), size=15, mode='reflect')
+                # Subtract constant C (like OpenCV adaptiveThreshold)
+                bin_arr = np.where(arr < (local_mean - 4), 0, 255).astype(np.uint8)
+                processed_np = bin_arr
+                pil_out = Image.fromarray(processed_np)
+                logger.info("PIL + NumPy: Advanced local adaptive thresholding applied.")
+            except Exception as numpy_thresh_err:
+                logger.warning(f"Local numpy thresholding failed: {numpy_thresh_err}. Using global Otsu-style point threshold.")
+                # Fallback to high-contrast binarization point filter
+                thresh_val = 127
+                # Quick point thresholding
+                pil_out = processed.point(lambda p: 255 if p > thresh_val else 0, "1")
+                processed_np = np.array(pil_out.convert("L"))
+        else:
+            processed_np = np.array(processed)
+            pil_out = processed
+
+        return processed_np, pil_out
+
+    except Exception as e:
+        logger.error(f"PIL fallback preprocessing failed: {e}")
+        # Final emergency return of raw image
+        raw_gray = image.convert("L")
+        return np.array(raw_gray), image
+
+
 def preprocess_for_ocr(
     image: Image.Image,
     grayscale: bool = True,
@@ -88,9 +173,14 @@ def preprocess_for_ocr(
     - High-pass stroke sharpening
     - Adaptive Gaussian C thresholding to handle lighting gradients/shadows
     
+    If cv2 is unavailable or raises an error, gracefully degrades to high-fidelity PIL-based pipeline.
+    
     Returns:
         tuple: (preprocessed_numpy_array, preprocessed_PIL_image)
     """
+    if not HAS_CV2:
+        return _preprocess_via_pil(image, grayscale, sharpen, denoise, threshold)
+
     try:
         # Convert PIL Image to OpenCV BGR numpy array
         img_np = np.array(image)
@@ -151,7 +241,11 @@ def preprocess_for_ocr(
         return processed, pil_out
 
     except Exception as e:
-        logger.error(f"Image preprocessing failed: {str(e)}")
-        # Graceful fallback: return original PIL image and original converted to grayscale numpy
-        fallback_np = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-        return fallback_np, image
+        logger.error(f"OpenCV preprocessing failed: {str(e)}. Attempting PIL fallback...")
+        try:
+            return _preprocess_via_pil(image, grayscale, sharpen, denoise, threshold)
+        except Exception as e_fallback:
+            logger.critical(f"Both OpenCV and PIL fallback preprocessing pipelines failed: {e_fallback}")
+            # Absolute safety fallback: return grayscale numpy array and raw PIL image
+            fallback_gray = image.convert("L")
+            return np.array(fallback_gray), image

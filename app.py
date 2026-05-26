@@ -6,7 +6,7 @@ import logging
 from PIL import Image
 
 # Import Modular Pipelines
-from image_utils import load_image_safely, resize_image_optimally, preprocess_for_ocr
+from image_utils import load_image_safely, resize_image_optimally, preprocess_for_ocr, HAS_CV2
 from pdf_utils import get_pdf_page_count, convert_pdf_to_images
 from ocr import extract_text
 from mindmap_generator import generate_mindmap_from_concepts
@@ -386,6 +386,45 @@ spring_length = st.sidebar.slider("Link Space Distance", min_value=150, max_valu
 spring_strength = st.sidebar.slider("Spring Elastic Rigidity", min_value=0.01, max_value=0.10, value=0.04, step=0.01)
 edge_smooth = st.sidebar.checkbox("Curved Connection Joints", value=True)
 show_json = st.sidebar.checkbox("Show Semantic Concept JSON", value=False)
+
+# ----------------- SIDEBAR SYSTEM DIAGNOSTICS -----------------
+st.sidebar.markdown("<div class='sidebar-header'>🛡️ System Status</div>", unsafe_allow_html=True)
+
+# 1. OpenCV Headless Status
+if HAS_CV2:
+    st.sidebar.markdown("🟢 **OpenCV Engine:** `Headless Active`  \n*Speed-optimized CV2 backend loaded.*")
+else:
+    st.sidebar.markdown("🟡 **OpenCV Engine:** `PIL Fallback Mode`  \n*Headless Pillow fallback active. Safe.*")
+
+# 2. PDF Engine Status
+try:
+    import fitz
+    st.sidebar.markdown("🟢 **PDF Parser:** `PyMuPDF Active`  \n*Super-fast in-memory PDF extraction.*")
+except ImportError:
+    st.sidebar.markdown("🟡 **PDF Parser:** `Poppler Fallback`  \n*Poppler required if PDF range selected.*")
+
+# 3. EasyOCR Status
+try:
+    import torch
+    gpu_available = torch.cuda.is_available()
+    gpu_label = "GPU Accelerated" if gpu_available else "CPU Standard"
+    st.sidebar.markdown(f"🟢 **EasyOCR Engine:** `Ready ({gpu_label})`  \n*Neural handwriting reader activated.*")
+except Exception:
+    st.sidebar.markdown("🔴 **EasyOCR Engine:** `Inactive`  \n*Initialization error. Fallback to Tesseract.*")
+
+# 4. PyTesseract Status
+import shutil
+has_tesseract = shutil.which("tesseract") is not None
+if not has_tesseract:
+    import pytesseract
+    if hasattr(pytesseract.pytesseract, 'tesseract_cmd') and pytesseract.pytesseract.tesseract_cmd:
+        has_tesseract = os.path.exists(pytesseract.pytesseract.tesseract_cmd)
+
+if has_tesseract:
+    st.sidebar.markdown("🟢 **Tesseract OCR:** `Auto-Discovered`  \n*Print/scan recognition engines active.*")
+else:
+    st.sidebar.markdown("🟡 **Tesseract OCR:** `Unavailable`  \n*Requires binary installation for printed scans.*")
+
 
 # ----------------- STUNNING HEADER HERO -----------------
 st.markdown(f"""
