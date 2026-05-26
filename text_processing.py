@@ -1,59 +1,106 @@
-from collections import Counter
 import re
 
-# ---------- CLEAN TEXT ----------
+# 🔥 AI modules
+from concept_extraction.embeddings import get_embeddings
+from concept_extraction.topic_modeling import group_topics
+from concept_extraction.relations import extract_relationships
+
+
+# -------------------------------------------------
+# CLEAN TEXT (OCR POST-PROCESSING)
+# -------------------------------------------------
 def clean_text(text):
-    text = text.lower()
-    text = re.sub(r"[^a-z\s]", "", text)
+    """
+    Cleans OCR or typed text:
+    - normalize spaces
+    - preserve sentence boundaries
+    """
+    text = text.strip()
+    text = re.sub(r"\s+", " ", text)
     return text
 
 
-# ---------- EXTRACT KEY PHRASES ----------
-def extract_keywords(text):
-    words = text.split()
-    phrases = []
-
-    for i in range(len(words) - 1):
-        w1, w2 = words[i], words[i + 1]
-        if len(w1) > 3 and len(w2) > 3:
-            phrases.append(f"{w1} {w2}")
-
-    freq = Counter(phrases)
-    return [p for p, _ in freq.most_common(10)]
+# -------------------------------------------------
+# SPLIT INTO LINES (FOR HANDWRITTEN / BULLETS)
+# -------------------------------------------------
+def split_lines(text):
+    return [line.strip() for line in text.split("\n") if len(line.strip()) > 3]
 
 
-# ---------- SMART MAIN TOPIC DETECTION ----------
-def detect_main_topic(text, keywords):
+# -------------------------------------------------
+# SPLIT INTO SENTENCES (FOR PARAGRAPHS)
+# -------------------------------------------------
+def split_sentences(text):
+    sentences = re.split(r"[.!?]", text)
+    return [s.strip() for s in sentences if len(s.strip()) > 15]
+
+
+# -------------------------------------------------
+# 🔥 ADVANCED CONCEPT EXTRACTION (FINAL MERGED VERSION)
+# -------------------------------------------------
+def extract_concepts_advanced(text):
     """
-    Detect main topic using:
-    1. Heading-like phrases
-    2. Domain keywords
-    3. Frequency fallback
+    Unified concept understanding pipeline:
+    ✔ Supports handwritten notes
+    ✔ Supports paragraph-style academic text
+    ✔ Safe main-topic detection
+    ✔ Semantic clustering
     """
 
-    # 1️⃣ Heading-style detection (short & strong)
-    for phrase in keywords:
-        if len(phrase.split()) <= 2:
-            if any(word in phrase for word in ["ethic", "justice", "behavior", "learning", "system"]):
-                return phrase.title()
+    # ---------- STEP 1: CLEAN ----------
+    text = clean_text(text)
 
-    # 2️⃣ Domain-aware detection
-    DOMAIN_TOPICS = [
-        "ethics",
-        "ethical behavior",
-        "justice",
-        "machine learning",
-        "data science",
-        "artificial intelligence"
-    ]
+    if not text:
+        return {
+            "main_topic": "Unknown Topic",
+            "topics": {},
+            "relations": []
+        }
 
-    text_lower = text.lower()
-    for topic in DOMAIN_TOPICS:
-        if topic in text_lower:
-            return topic.title()
+    # ---------- STEP 2: TRY LINE-BASED FIRST ----------
+    lines = split_lines(text)
 
-    # 3️⃣ Fallback: most frequent phrase
-    if keywords:
-        return keywords[0].title()
+    # Heuristic: if many short lines → handwritten notes
+    use_lines = len(lines) >= 3 and all(len(l.split()) <= 8 for l in lines[:3])
 
-    return "Main Topic"
+    if use_lines:
+        units = lines
+    else:
+        units = split_sentences(text)
+
+    if not units:
+        return {
+            "main_topic": "Unknown Topic",
+            "topics": {},
+            "relations": []
+        }
+
+    # ---------- STEP 3: MAIN TOPIC ----------
+    main_topic = units[0][:60].title()
+
+    # ---------- STEP 4: SUBTOPICS ----------
+    subtopics = units[1:]
+
+    # Fallback: if still too few
+    if len(subtopics) < 2:
+        subtopics = units
+
+    # Normalize subtopics
+    subtopics = list(dict.fromkeys([s.title() for s in subtopics]))
+
+    # ---------- STEP 5: EMBEDDINGS ----------
+    embeddings = get_embeddings(subtopics)
+
+    # ---------- STEP 6: CLUSTERING ----------
+    k = min(4, len(subtopics))
+    topic_groups = group_topics(embeddings, subtopics, k=k)
+
+    # ---------- STEP 7: RELATION EXTRACTION ----------
+    relations = extract_relationships(text)
+
+    # ---------- FINAL OUTPUT ----------
+    return {
+        "main_topic": main_topic,
+        "topics": topic_groups,
+        "relations": relations
+    }
